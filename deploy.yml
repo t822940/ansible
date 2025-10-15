@@ -1,0 +1,248 @@
+---
+- name: Orchestrate Infrastructure Deployments
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  
+  vars:
+    # Default deployment components (can be overridden with extra-vars)
+    deploy_components: []
+    
+    # Working directories
+    work_dir: "/tmp/ansible-deployments"
+    k3s_dir: "{{ work_dir }}/k3s_deployment"
+    awx_dir: "{{ work_dir }}/awx_deployment"
+    ipam_dir: "{{ work_dir }}/ipam_deployment"
+    
+    # Git repositories
+    k3s_repo: "https://github.com/t822940/k3s-deployment.git"
+    awx_repo: "https://github.com/t822940/awx-deployment.git"
+    ipam_repo: "https://github.com/t822940/ipam-deployment.git"
+
+  tasks:
+    - name: Display deployment components
+      debug:
+        msg: "Deploying components: {{ deploy_components | join(', ') }}"
+      when: deploy_components | length > 0
+
+    - name: Fail if no components specified
+      fail:
+        msg: "No deployment components specified. Use -e 'deploy_components=[\"k3s\",\"awx\",\"ipam\"]'"
+      when: deploy_components | length == 0
+
+    - name: Create working directory
+      file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: '0755'
+
+    # K3s Deployment
+    - name: Deploy K3s Cluster
+      block:
+        - name: Check if local K3s deployment exists
+          stat:
+            path: "../k3s_deployment/k3s.yml"
+          register: local_k3s
+
+        - name: Use local K3s deployment
+          block:
+            - name: Deploy K3s from local files
+              ansible.builtin.command:
+                cmd: ansible-playbook -i inventory k3s.yml
+                chdir: "../k3s_deployment"
+              register: k3s_result
+
+            - name: Display K3s deployment result
+              debug:
+                msg: "{{ k3s_result.stdout_lines }}"
+          when: local_k3s.stat.exists
+
+        - name: Use remote K3s deployment
+          block:
+            - name: Clone K3s repository
+              git:
+                repo: "{{ k3s_repo }}"
+                dest: "{{ k3s_dir }}"
+                force: yes
+              when: not local_k3s.stat.exists
+
+            - name: Deploy K3s from cloned repository
+              ansible.builtin.command:
+                cmd: ansible-playbook -i inventory k3s.yml
+                chdir: "{{ k3s_dir }}"
+              register: k3s_remote_result
+              when: not local_k3s.stat.exists
+
+            - name: Display remote K3s deployment result
+              debug:
+                msg: "{{ k3s_remote_result.stdout_lines }}"
+              when: not local_k3s.stat.exists
+          when: not local_k3s.stat.exists
+
+        - name: Wait for K3s to be ready
+          shell: "/usr/local/bin/k3s kubectl get nodes --no-headers"
+          register: k3s_nodes
+          retries: 10
+          delay: 10
+          until: k3s_nodes.stdout is search(' Ready ')
+          when: local_k3s.stat.exists or not local_k3s.stat.exists
+
+        - name: Display K3s cluster status
+          debug:
+            msg: "K3s cluster is ready: {{ k3s_nodes.stdout_lines }}"
+
+      when: "'k3s' in deploy_components"
+
+    # AWX Deployment
+    - name: Deploy AWX
+      block:
+        - name: Check if kubectl is available
+          command: kubectl version --client
+          register: kubectl_check
+          failed_when: false
+
+        - name: Fail if kubectl not available
+          fail:
+            msg: "kubectl is not available. Please deploy K3s first or ensure Kubernetes access."
+          when: kubectl_check.rc != 0
+
+        - name: Check if local AWX deployment exists
+          stat:
+            path: "../awx_deployment"
+          register: local_awx
+
+        - name: Use local AWX deployment
+          block:
+            - name: Deploy AWX from local files
+              ansible.builtin.command:
+                cmd: ansible-playbook main.yml
+                chdir: "../awx_deployment/awx"
+              register: awx_result
+
+            - name: Display AWX deployment result
+              debug:
+                msg: "{{ awx_result.stdout_lines }}"
+          when: local_awx.stat.exists
+
+        - name: Use remote AWX deployment
+          block:
+            - name: Clone AWX repository
+              git:
+                repo: "{{ awx_repo }}"
+                dest: "{{ awx_dir }}"
+                force: yes
+              when: not local_awx.stat.exists
+
+            - name: Deploy AWX from cloned repository
+              ansible.builtin.command:
+                cmd: ansible-playbook main.yml
+                chdir: "{{ awx_dir }}/awx"
+              register: awx_remote_result
+              when: not local_awx.stat.exists
+
+            - name: Display remote AWX deployment result
+              debug:
+                msg: "{{ awx_remote_result.stdout_lines }}"
+              when: not local_awx.stat.exists
+          when: not local_awx.stat.exists
+
+        - name: Wait for AWX to be ready
+          shell: "kubectl get pods -n awx --no-headers | grep -v Completed"
+          register: awx_pods
+          retries: 20
+          delay: 30
+          until: awx_pods.stdout_lines | select('search', 'Running') | list | length >= 2
+
+        - name: Get AWX admin password
+          shell: "kubectl get secret awx-admin-password -n awx -o jsonpath='{.data.password}' | base64 --decode"
+          register: awx_password
+          no_log: true
+
+        - name: Display AWX access information
+          debug:
+            msg:
+              - "AWX is ready!"
+              - "Access: http://{{ ansible_default_ipv4.address }}:30081"
+              - "Username: admin"
+              - "Password: {{ awx_password.stdout }}"
+
+      when: "'awx' in deploy_components"
+
+    # IPAM Deployment
+    - name: Deploy IPAM
+      block:
+        - name: Check if kubectl is available
+          command: kubectl version --client
+          register: kubectl_check
+          failed_when: false
+
+        - name: Fail if kubectl not available
+          fail:
+            msg: "kubectl is not available. Please deploy K3s first or ensure Kubernetes access."
+          when: kubectl_check.rc != 0
+
+        - name: Check if local IPAM deployment exists
+          stat:
+            path: "../ipam_deployment"
+          register: local_ipam
+
+        - name: Use local IPAM deployment
+          block:
+            - name: Deploy IPAM from local files
+              ansible.builtin.command:
+                cmd: ansible-playbook playbook.yml
+                chdir: "../ipam_deployment"
+              register: ipam_result
+
+            - name: Display IPAM deployment result
+              debug:
+                msg: "{{ ipam_result.stdout_lines }}"
+          when: local_ipam.stat.exists
+
+        - name: Use remote IPAM deployment
+          block:
+            - name: Clone IPAM repository
+              git:
+                repo: "{{ ipam_repo }}"
+                dest: "{{ ipam_dir }}"
+                force: yes
+              when: not local_ipam.stat.exists
+
+            - name: Deploy IPAM from cloned repository
+              ansible.builtin.command:
+                cmd: ansible-playbook playbook.yml
+                chdir: "{{ ipam_dir }}"
+              register: ipam_remote_result
+              when: not local_ipam.stat.exists
+
+            - name: Display remote IPAM deployment result
+              debug:
+                msg: "{{ ipam_remote_result.stdout_lines }}"
+              when: not local_ipam.stat.exists
+          when: not local_ipam.stat.exists
+
+        - name: Wait for IPAM pods to be ready
+          shell: "kubectl get pods -n ipam --no-headers"
+          register: ipam_pods
+          retries: 15
+          delay: 20
+          until: ipam_pods.stdout_lines | select('search', 'Running') | list | length >= 2
+
+        - name: Display IPAM access information
+          debug:
+            msg:
+              - "IPAM is ready!"
+              - "Access: http://{{ ansible_default_ipv4.address }}:30080"
+              - "Default login: admin/ipamadmin"
+
+      when: "'ipam' in deploy_components"
+
+    # Final Summary
+    - name: Deployment Summary
+      debug:
+        msg:
+          - "=== Deployment Complete ==="
+          - "Deployed components: {{ deploy_components | join(', ') }}"
+          - "{% if 'k3s' in deploy_components %}K3s Cluster: Ready{% endif %}"
+          - "{% if 'awx' in deploy_components %}AWX: http://{{ ansible_default_ipv4.address }}:30081{% endif %}"
+          - "{% if 'ipam' in deploy_components %}IPAM: http://{{ ansible_default_ipv4.address }}:30080{% endif %}"
