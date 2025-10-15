@@ -129,7 +129,7 @@
             - name: Deploy AWX from local files
               ansible.builtin.command:
                 cmd: ansible-playbook main.yml
-                chdir: "../awx_deployment/awx"
+                chdir: "../awx_deploymen/"
               register: awx_result
 
             - name: Display AWX deployment result
@@ -181,27 +181,35 @@
             - name: Deploy AWX from cloned repository (try awx subdirectory)
               ansible.builtin.command:
                 cmd: ansible-playbook main.yml
-                chdir: "{{ awx_dir }}/awx"
+                chdir: "{{ awx_dir }}/"
               register: awx_remote_result
-              when: awx_clone_result is succeeded and awx_playbook_files.files | selectattr('path', 'search', '/awx/main.yml') | list | length > 0
+              when: awx_clone_result is succeeded and awx_playbook_files.files | selectattr('path', 'search', '//main.yml') | list | length > 0
               failed_when: false
+
+            - name: Check if awx subdirectory deployment succeeded
+              set_fact:
+                awx_subdir_success: "{{ awx_remote_result is defined and awx_remote_result.rc is defined and awx_remote_result.rc == 0 }}"
+              when: awx_clone_result is succeeded
 
             - name: Deploy AWX from cloned repository (try root directory)
               ansible.builtin.command:
                 cmd: ansible-playbook main.yml
                 chdir: "{{ awx_dir }}"
               register: awx_remote_result_root
-              when: awx_clone_result is succeeded and (awx_remote_result is not defined or awx_remote_result.rc != 0) and awx_playbook_files.files | selectattr('path', 'search', '/main.yml$') | list | length > 0
+              when: awx_clone_result is succeeded and not (awx_subdir_success | default(false)) and awx_playbook_files.files | selectattr('path', 'search', '/main.yml$') | list | length > 0
+              failed_when: false
 
-            - name: Display remote AWX deployment result (from awx subdirectory)
+            - name: Display AWX deployment result
               debug:
-                msg: "{{ awx_remote_result.stdout_lines }}"
-              when: awx_clone_result is succeeded and awx_remote_result is defined and awx_remote_result.rc == 0
-
-            - name: Display remote AWX deployment result (from root directory)
-              debug:
-                msg: "{{ awx_remote_result_root.stdout_lines }}"
-              when: awx_clone_result is succeeded and awx_remote_result_root is defined and awx_remote_result_root.rc == 0
+                msg: |
+                  {% if awx_subdir_success | default(false) %}
+                  AWX deployed from awx subdirectory: {{ awx_remote_result.stdout_lines | default(['No output']) }}
+                  {% elif awx_remote_result_root is defined and awx_remote_result_root.rc is defined and awx_remote_result_root.rc == 0 %}
+                  AWX deployed from root directory: {{ awx_remote_result_root.stdout_lines | default(['No output']) }}
+                  {% else %}
+                  AWX deployment status unknown or failed
+                  {% endif %}
+              when: awx_clone_result is succeeded
           when: not local_awx.stat.exists and awx_repo != ""
 
         - name: Wait for AWX to be ready
