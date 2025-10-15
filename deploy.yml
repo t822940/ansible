@@ -71,12 +71,20 @@
                 force: yes
               register: k3s_clone_result
 
+            - name: Look for K3s playbook files
+              find:
+                paths: "{{ k3s_dir }}"
+                patterns: "k3s.yml"
+                recurse: yes
+              register: k3s_playbook_files
+              when: k3s_clone_result is succeeded
+
             - name: Deploy K3s from cloned repository
               ansible.builtin.command:
                 cmd: ansible-playbook -i inventory k3s.yml
-                chdir: "{{ k3s_dir }}"
+                chdir: "{{ k3s_playbook_files.files[0].path | dirname }}"
               register: k3s_remote_result
-              when: k3s_clone_result is succeeded
+              when: k3s_clone_result is succeeded and k3s_playbook_files.files | length > 0
 
             - name: Display remote K3s deployment result
               debug:
@@ -143,17 +151,57 @@
                 force: yes
               register: awx_clone_result
 
-            - name: Deploy AWX from cloned repository
+            - name: Check cloned AWX directory structure
+              find:
+                paths: "{{ awx_dir }}"
+                file_type: directory
+                recurse: yes
+                depth: 2
+              register: awx_dir_structure
+              when: awx_clone_result is succeeded
+
+            - name: Display directory structure for debugging
+              debug:
+                msg: "Found directories: {{ awx_dir_structure.files | map(attribute='path') | list }}"
+              when: awx_clone_result is succeeded
+
+            - name: Look for AWX playbook files
+              find:
+                paths: "{{ awx_dir }}"
+                patterns: "main.yml"
+                recurse: yes
+              register: awx_playbook_files
+              when: awx_clone_result is succeeded
+
+            - name: Display playbook locations
+              debug:
+                msg: "Found playbooks: {{ awx_playbook_files.files | map(attribute='path') | list }}"
+              when: awx_clone_result is succeeded
+
+            - name: Deploy AWX from cloned repository (try awx subdirectory)
               ansible.builtin.command:
                 cmd: ansible-playbook main.yml
                 chdir: "{{ awx_dir }}/awx"
               register: awx_remote_result
-              when: awx_clone_result is succeeded
+              when: awx_clone_result is succeeded and awx_playbook_files.files | selectattr('path', 'search', '/awx/main.yml') | list | length > 0
+              failed_when: false
 
-            - name: Display remote AWX deployment result
+            - name: Deploy AWX from cloned repository (try root directory)
+              ansible.builtin.command:
+                cmd: ansible-playbook main.yml
+                chdir: "{{ awx_dir }}"
+              register: awx_remote_result_root
+              when: awx_clone_result is succeeded and (awx_remote_result is not defined or awx_remote_result.rc != 0) and awx_playbook_files.files | selectattr('path', 'search', '/main.yml$') | list | length > 0
+
+            - name: Display remote AWX deployment result (from awx subdirectory)
               debug:
                 msg: "{{ awx_remote_result.stdout_lines }}"
-              when: awx_clone_result is succeeded and awx_remote_result is defined
+              when: awx_clone_result is succeeded and awx_remote_result is defined and awx_remote_result.rc == 0
+
+            - name: Display remote AWX deployment result (from root directory)
+              debug:
+                msg: "{{ awx_remote_result_root.stdout_lines }}"
+              when: awx_clone_result is succeeded and awx_remote_result_root is defined and awx_remote_result_root.rc == 0
           when: not local_awx.stat.exists and awx_repo != ""
 
         - name: Wait for AWX to be ready
@@ -223,12 +271,20 @@
                 force: yes
               register: ipam_clone_result
 
+            - name: Look for IPAM playbook files
+              find:
+                paths: "{{ ipam_dir }}"
+                patterns: "playbook.yml"
+                recurse: yes
+              register: ipam_playbook_files
+              when: ipam_clone_result is succeeded
+
             - name: Deploy IPAM from cloned repository
               ansible.builtin.command:
                 cmd: ansible-playbook playbook.yml
-                chdir: "{{ ipam_dir }}"
+                chdir: "{{ ipam_playbook_files.files[0].path | dirname }}"
               register: ipam_remote_result
-              when: ipam_clone_result is succeeded
+              when: ipam_clone_result is succeeded and ipam_playbook_files.files | length > 0
 
             - name: Display remote IPAM deployment result
               debug:
