@@ -1,327 +1,80 @@
 ---
-- name: Orchestrate Infrastructure Deployments
+- name: Simple Infrastructure Deployment
   hosts: localhost
   connection: local
-  gather_facts: true
+  gather_facts: false
   
   vars:
-    # Default deployment components (can be overridden with extra-vars)
     deploy_components: []
-    
-    # Working directories
     work_dir: "/tmp/ansible-deployments"
-    k3s_dir: "{{ work_dir }}/k3s_deployment"
-    awx_dir: "{{ work_dir }}/awx_deployment"
-    ipam_dir: "{{ work_dir }}/ipam_deployment"
     
-    # Git repositories (optional - only used if local files not available)
-    k3s_repo: ""  # Set to actual repo URL if needed
-    awx_repo: ""  # Set to actual repo URL if needed  
-    ipam_repo: "" # Set to actual repo URL if needed
+    # Git repositories - set these to actual repo URLs
+    k3s_repo: "https://github.com/t822940/k3s.git"
+    awx_repo: "https://github.com/t822940/awx.git"
+    ipam_repo: "https://github.com/t822940/ipam.git"
 
   tasks:
-    - name: Display deployment components
-      debug:
-        msg: "Deploying components: {{ deploy_components | join(', ') }}"
-      when: deploy_components | length > 0
-
-    - name: Fail if no components specified
-      fail:
-        msg: "No deployment components specified. Use -e 'deploy_components=[\"k3s\",\"awx\",\"ipam\"]'"
-      when: deploy_components | length == 0
-
     - name: Create working directory
       file:
         path: "{{ work_dir }}"
         state: directory
         mode: '0755'
 
-    # K3s Deployment
-    - name: Deploy K3s Cluster
-      block:
-        - name: Check if local K3s deployment exists
-          stat:
-            path: "../k3s_deployment/k3s.yml"
-          register: local_k3s
+    - name: Clone K3s repository
+      git:
+        repo: "{{ k3s_repo }}"
+        dest: "{{ work_dir }}/k3s_deployment"
+        force: yes
+      when: "'k3s' in deploy_components and k3s_repo != ''"
 
-        - name: Use local K3s deployment
-          block:
-            - name: Deploy K3s from local files
-              ansible.builtin.command:
-                cmd: ansible-playbook -i inventory k3s.yml
-                chdir: "../k3s_deployment"
-              register: k3s_result
+    - name: Clone AWX repository
+      git:
+        repo: "{{ awx_repo }}"
+        dest: "{{ work_dir }}/awx_deployment"
+        force: yes
+      when: "'awx' in deploy_components and awx_repo != ''"
 
-            - name: Display K3s deployment result
-              debug:
-                msg: "{{ k3s_result.stdout_lines }}"
-          when: local_k3s.stat.exists
+    - name: Clone IPAM repository
+      git:
+        repo: "{{ ipam_repo }}"
+        dest: "{{ work_dir }}/ipam_deployment"
+        force: yes
+      when: "'ipam' in deploy_components and ipam_repo != ''"
 
-        - name: Fail if no K3s deployment available
-          fail:
-            msg: "K3s deployment not found locally (../k3s_deployment/k3s.yml) and no remote repository configured. Please provide k3s_repo variable or ensure local files exist."
-          when: not local_k3s.stat.exists and k3s_repo == ""
-
-        - name: Handle missing K3s deployment
-          block:
-            - name: Clone K3s repository
-              git:
-                repo: "{{ k3s_repo }}"
-                dest: "{{ k3s_dir }}"
-                force: yes
-              register: k3s_clone_result
-
-            - name: Look for K3s playbook files
-              find:
-                paths: "{{ k3s_dir }}"
-                patterns: "k3s.yml"
-                recurse: yes
-              register: k3s_playbook_files
-              when: k3s_clone_result is succeeded
-
-            - name: Deploy K3s from cloned repository
-              ansible.builtin.command:
-                cmd: ansible-playbook -i inventory k3s.yml
-                chdir: "{{ k3s_playbook_files.files[0].path | dirname }}"
-              register: k3s_remote_result
-              when: k3s_clone_result is succeeded and k3s_playbook_files.files | length > 0
-
-            - name: Display remote K3s deployment result
-              debug:
-                msg: "{{ k3s_remote_result.stdout_lines }}"
-              when: k3s_clone_result is succeeded and k3s_remote_result is defined
-          when: not local_k3s.stat.exists and k3s_repo != ""
-
-        - name: Wait for K3s to be ready
-          shell: "/usr/local/bin/k3s kubectl get nodes --no-headers"
-          register: k3s_nodes
-          retries: 10
-          delay: 10
-          until: k3s_nodes.stdout is search(' Ready ')
-          when: local_k3s.stat.exists or not local_k3s.stat.exists
-
-        - name: Display K3s cluster status
-          debug:
-            msg: "K3s cluster is ready: {{ k3s_nodes.stdout_lines }}"
-
+    - name: Check if K3s is already running
+      command: /usr/local/bin/k3s kubectl get nodes
+      register: k3s_running
+      failed_when: false
       when: "'k3s' in deploy_components"
 
-    # AWX Deployment
-    - name: Deploy AWX
-      block:
-        - name: Check if kubectl is available
-          command: kubectl version --client
-          register: kubectl_check
-          failed_when: false
+    - name: Deploy K3s
+      ansible.builtin.command:
+        cmd: ansible-playbook -i inventory k3s.yml
+        chdir: "{{ work_dir }}/k3s_deployment"
+      when: "'k3s' in deploy_components and k3s_running.rc != 0"
 
-        - name: Fail if kubectl not available
-          fail:
-            msg: "kubectl is not available. Please deploy K3s first or ensure Kubernetes access."
-          when: kubectl_check.rc != 0
-
-        - name: Check if local AWX deployment exists
-          stat:
-            path: "../awx_deployment"
-          register: local_awx
-
-        - name: Use local AWX deployment
-          block:
-            - name: Deploy AWX from local files
-              ansible.builtin.command:
-                cmd: ansible-playbook main.yml
-                chdir: "../awx_deploymen/"
-              register: awx_result
-
-            - name: Display AWX deployment result
-              debug:
-                msg: "{{ awx_result.stdout_lines }}"
-          when: local_awx.stat.exists
-
-        - name: Fail if no AWX deployment available
-          fail:
-            msg: "AWX deployment not found locally (../awx_deployment) and no remote repository configured. Please provide awx_repo variable or ensure local files exist."
-          when: not local_awx.stat.exists and awx_repo == ""
-
-        - name: Handle missing AWX deployment
-          block:
-            - name: Clone AWX repository
-              git:
-                repo: "{{ awx_repo }}"
-                dest: "{{ awx_dir }}"
-                force: yes
-              register: awx_clone_result
-
-            - name: Check cloned AWX directory structure
-              find:
-                paths: "{{ awx_dir }}"
-                file_type: directory
-                recurse: yes
-                depth: 2
-              register: awx_dir_structure
-              when: awx_clone_result is succeeded
-
-            - name: Display directory structure for debugging
-              debug:
-                msg: "Found directories: {{ awx_dir_structure.files | map(attribute='path') | list }}"
-              when: awx_clone_result is succeeded
-
-            - name: Look for AWX playbook files
-              find:
-                paths: "{{ awx_dir }}"
-                patterns: "main.yml"
-                recurse: yes
-              register: awx_playbook_files
-              when: awx_clone_result is succeeded
-
-            - name: Display playbook locations
-              debug:
-                msg: "Found playbooks: {{ awx_playbook_files.files | map(attribute='path') | list }}"
-              when: awx_clone_result is succeeded
-
-            - name: Deploy AWX from cloned repository (try awx subdirectory)
-              ansible.builtin.command:
-                cmd: ansible-playbook main.yml
-                chdir: "{{ awx_dir }}/"
-              register: awx_remote_result
-              when: awx_clone_result is succeeded and awx_playbook_files.files | selectattr('path', 'search', '//main.yml') | list | length > 0
-              failed_when: false
-
-            - name: Check if awx subdirectory deployment succeeded
-              set_fact:
-                awx_subdir_success: "{{ awx_remote_result is defined and awx_remote_result.rc is defined and awx_remote_result.rc == 0 }}"
-              when: awx_clone_result is succeeded
-
-            - name: Deploy AWX from cloned repository (try root directory)
-              ansible.builtin.command:
-                cmd: ansible-playbook main.yml
-                chdir: "{{ awx_dir }}"
-              register: awx_remote_result_root
-              when: awx_clone_result is succeeded and not (awx_subdir_success | default(false)) and awx_playbook_files.files | selectattr('path', 'search', '/main.yml$') | list | length > 0
-              failed_when: false
-
-            - name: Display AWX deployment result
-              debug:
-                msg: |
-                  {% if awx_subdir_success | default(false) %}
-                  AWX deployed from awx subdirectory: {{ awx_remote_result.stdout_lines | default(['No output']) }}
-                  {% elif awx_remote_result_root is defined and awx_remote_result_root.rc is defined and awx_remote_result_root.rc == 0 %}
-                  AWX deployed from root directory: {{ awx_remote_result_root.stdout_lines | default(['No output']) }}
-                  {% else %}
-                  AWX deployment status unknown or failed
-                  {% endif %}
-              when: awx_clone_result is succeeded
-          when: not local_awx.stat.exists and awx_repo != ""
-
-        - name: Wait for AWX to be ready
-          shell: "kubectl get pods -n awx --no-headers | grep -v Completed"
-          register: awx_pods
-          retries: 20
-          delay: 30
-          until: awx_pods.stdout_lines | select('search', 'Running') | list | length >= 2
-
-        - name: Get AWX admin password
-          shell: "kubectl get secret awx-admin-password -n awx -o jsonpath='{.data.password}' | base64 --decode"
-          register: awx_password
-          no_log: true
-
-        - name: Display AWX access information
-          debug:
-            msg:
-              - "AWX is ready!"
-              - "Access: http://{{ ansible_default_ipv4.address }}:30081"
-              - "Username: admin"
-              - "Password: {{ awx_password.stdout }}"
-
+    - name: Fix PostgreSQL data directory permissions
+      file:
+        path: /opt/awx-postgres-data
+        state: directory
+        mode: '0777'
+        owner: 70
+        group: 70
+      become: yes
       when: "'awx' in deploy_components"
 
-    # IPAM Deployment
+    - name: Deploy AWX
+      ansible.builtin.command:
+        cmd: ansible-playbook main.yml
+        chdir: "{{ work_dir }}/awx_deployment"
+      when: "'awx' in deploy_components"
+
     - name: Deploy IPAM
-      block:
-        - name: Check if kubectl is available
-          command: kubectl version --client
-          register: kubectl_check
-          failed_when: false
-
-        - name: Fail if kubectl not available
-          fail:
-            msg: "kubectl is not available. Please deploy K3s first or ensure Kubernetes access."
-          when: kubectl_check.rc != 0
-
-        - name: Check if local IPAM deployment exists
-          stat:
-            path: "../ipam_deployment"
-          register: local_ipam
-
-        - name: Use local IPAM deployment
-          block:
-            - name: Deploy IPAM from local files
-              ansible.builtin.command:
-                cmd: ansible-playbook playbook.yml
-                chdir: "../ipam_deployment"
-              register: ipam_result
-
-            - name: Display IPAM deployment result
-              debug:
-                msg: "{{ ipam_result.stdout_lines }}"
-          when: local_ipam.stat.exists
-
-        - name: Fail if no IPAM deployment available
-          fail:
-            msg: "IPAM deployment not found locally (../ipam_deployment) and no remote repository configured. Please provide ipam_repo variable or ensure local files exist."
-          when: not local_ipam.stat.exists and ipam_repo == ""
-
-        - name: Handle missing IPAM deployment
-          block:
-            - name: Clone IPAM repository
-              git:
-                repo: "{{ ipam_repo }}"
-                dest: "{{ ipam_dir }}"
-                force: yes
-              register: ipam_clone_result
-
-            - name: Look for IPAM playbook files
-              find:
-                paths: "{{ ipam_dir }}"
-                patterns: "playbook.yml"
-                recurse: yes
-              register: ipam_playbook_files
-              when: ipam_clone_result is succeeded
-
-            - name: Deploy IPAM from cloned repository
-              ansible.builtin.command:
-                cmd: ansible-playbook playbook.yml
-                chdir: "{{ ipam_playbook_files.files[0].path | dirname }}"
-              register: ipam_remote_result
-              when: ipam_clone_result is succeeded and ipam_playbook_files.files | length > 0
-
-            - name: Display remote IPAM deployment result
-              debug:
-                msg: "{{ ipam_remote_result.stdout_lines }}"
-              when: ipam_clone_result is succeeded and ipam_remote_result is defined
-          when: not local_ipam.stat.exists and ipam_repo != ""
-
-        - name: Wait for IPAM pods to be ready
-          shell: "kubectl get pods -n ipam --no-headers"
-          register: ipam_pods
-          retries: 15
-          delay: 20
-          until: ipam_pods.stdout_lines | select('search', 'Running') | list | length >= 2
-
-        - name: Display IPAM access information
-          debug:
-            msg:
-              - "IPAM is ready!"
-              - "Access: http://{{ ansible_default_ipv4.address }}:30080"
-              - "Default login: admin/ipamadmin"
-
+      ansible.builtin.command:
+        cmd: ansible-playbook playbook.yml
+        chdir: "{{ work_dir }}/ipam_deployment"
       when: "'ipam' in deploy_components"
 
-    # Final Summary
-    - name: Deployment Summary
+    - name: Display status
       debug:
-        msg:
-          - "=== Deployment Complete ==="
-          - "Deployed components: {{ deploy_components | join(', ') }}"
-          - "{% if 'k3s' in deploy_components %}K3s Cluster: Ready{% endif %}"
-          - "{% if 'awx' in deploy_components %}AWX: http://{{ ansible_default_ipv4.address }}:30081{% endif %}"
-          - "{% if 'ipam' in deploy_components %}IPAM: http://{{ ansible_default_ipv4.address }}:30080{% endif %}"
+        msg: "Deployed: {{ deploy_components | join(', ') }}"

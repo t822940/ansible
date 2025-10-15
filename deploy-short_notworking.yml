@@ -1,0 +1,59 @@
+---
+- name: Simple Infrastructure Deployment
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    # Default deployment components (can be overridden with extra-vars)
+    deploy_components: []
+    
+    # Working directories
+    work_dir: "/tmp/ansible-deployments"
+    k3s_dir: "{{ work_dir }}/k3s_deployment"
+    awx_dir: "{{ work_dir }}/awx_deployment"
+    ipam_dir: "{{ work_dir }}/ipam_deployment"
+    
+    # Git repositories (optional - only used if local files not available)
+    k3s_repo: ""  # Set to actual repo URL if needed
+    awx_repo: ""  # Set to actual repo URL if needed  
+    ipam_repo: "" # Set to actual repo URL if needed
+
+  tasks:
+    - name: Display deployment components
+      debug:
+        msg: "Deploying components: {{ deploy_components | join(', ') }}"
+      when: deploy_components | length > 0
+
+    - name: Fail if no components specified
+      fail:
+        msg: "No deployment components specified. Use -e 'deploy_components=[\"k3s\",\"awx\",\"ipam\"]'"
+      when: deploy_components | length == 0
+
+    - name: Create working directory
+      file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Deploy K3s
+      ansible.builtin.command:
+        cmd: ansible-playbook -i inventory k3s.yml
+        chdir: "{{ k3s_dir }}"
+      when: "'k3s' in deploy_components"
+
+    - name: Deploy AWX
+      ansible.builtin.command:
+        cmd: ansible-playbook main.yml
+        chdir: "{{ awx_dir }}/awx"
+      when: "'awx' in deploy_components"
+
+    - name: Deploy IPAM
+      ansible.builtin.command:
+        cmd: ansible-playbook playbook.yml
+        chdir: "{{ ipam_dir }}"
+      when: "'ipam' in deploy_components"
+
+    - name: Display status
+      debug:
+        msg: "Deployed: {{ deploy_components | join(', ') }}"
