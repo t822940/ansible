@@ -83,11 +83,24 @@ ansible-playbook deploy.yml -e 'deploy_components=["k3s","awx"]'
 ### Deployment Logic
 
 The playbook intelligently handles deployments by:
-- Using local deployment files if available (from parent directories)
-- Falling back to git cloning from remote repositories
-- Ensuring proper dependency order (K3s before AWX/IPAM)
-- Waiting for services to be ready before proceeding
-- Providing access credentials and URLs
+- **Prioritizing local files** - Uses deployment files from parent directories when available
+- **Remote repository fallback** - Only attempts git cloning if local files not found AND repo URLs configured
+- **Dependency management** - Ensures proper order (K3s before AWX/IPAM)
+- **Service readiness** - Waits for services to be ready before proceeding
+- **Access information** - Provides credentials and URLs after deployment
+
+### Remote Repository Configuration
+
+If you need to use remote repositories, set them via extra-vars:
+
+```bash
+ansible-playbook deploy.yml \
+  -e 'deploy_components=["k3s","awx"]' \
+  -e 'k3s_repo=https://github.com/your-org/k3s-deployment.git' \
+  -e 'awx_repo=https://github.com/your-org/awx-deployment.git'
+```
+
+**Note**: The playbook is designed to work primarily with local files. Remote repository URLs are intentionally empty by default to prevent authentication errors.
 
 ## Integration
 

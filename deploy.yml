@@ -14,10 +14,10 @@
     awx_dir: "{{ work_dir }}/awx_deployment"
     ipam_dir: "{{ work_dir }}/ipam_deployment"
     
-    # Git repositories
-    k3s_repo: "https://github.com/t822940/k3s-deployment.git"
-    awx_repo: "https://github.com/t822940/awx-deployment.git"
-    ipam_repo: "https://github.com/t822940/ipam-deployment.git"
+    # Git repositories (optional - only used if local files not available)
+    k3s_repo: ""  # Set to actual repo URL if needed
+    awx_repo: ""  # Set to actual repo URL if needed  
+    ipam_repo: "" # Set to actual repo URL if needed
 
   tasks:
     - name: Display deployment components
@@ -59,24 +59,29 @@
 
         - name: Use remote K3s deployment
           block:
+            - name: Check if remote repo is configured
+              fail:
+                msg: "K3s deployment not found locally and no remote repository configured. Please set k3s_repo variable."
+              when: k3s_repo == ""
+
             - name: Clone K3s repository
               git:
                 repo: "{{ k3s_repo }}"
                 dest: "{{ k3s_dir }}"
                 force: yes
-              when: not local_k3s.stat.exists
+              when: k3s_repo != ""
 
             - name: Deploy K3s from cloned repository
               ansible.builtin.command:
                 cmd: ansible-playbook -i inventory k3s.yml
                 chdir: "{{ k3s_dir }}"
               register: k3s_remote_result
-              when: not local_k3s.stat.exists
+              when: k3s_repo != ""
 
             - name: Display remote K3s deployment result
               debug:
                 msg: "{{ k3s_remote_result.stdout_lines }}"
-              when: not local_k3s.stat.exists
+              when: k3s_repo != ""
           when: not local_k3s.stat.exists
 
         - name: Wait for K3s to be ready
@@ -126,24 +131,29 @@
 
         - name: Use remote AWX deployment
           block:
+            - name: Check if remote repo is configured
+              fail:
+                msg: "AWX deployment not found locally and no remote repository configured. Please set awx_repo variable."
+              when: awx_repo == ""
+
             - name: Clone AWX repository
               git:
                 repo: "{{ awx_repo }}"
                 dest: "{{ awx_dir }}"
                 force: yes
-              when: not local_awx.stat.exists
+              when: awx_repo != ""
 
             - name: Deploy AWX from cloned repository
               ansible.builtin.command:
                 cmd: ansible-playbook main.yml
                 chdir: "{{ awx_dir }}/awx"
               register: awx_remote_result
-              when: not local_awx.stat.exists
+              when: awx_repo != ""
 
             - name: Display remote AWX deployment result
               debug:
                 msg: "{{ awx_remote_result.stdout_lines }}"
-              when: not local_awx.stat.exists
+              when: awx_repo != ""
           when: not local_awx.stat.exists
 
         - name: Wait for AWX to be ready
@@ -201,24 +211,29 @@
 
         - name: Use remote IPAM deployment
           block:
+            - name: Check if remote repo is configured
+              fail:
+                msg: "IPAM deployment not found locally and no remote repository configured. Please set ipam_repo variable."
+              when: ipam_repo == ""
+
             - name: Clone IPAM repository
               git:
                 repo: "{{ ipam_repo }}"
                 dest: "{{ ipam_dir }}"
                 force: yes
-              when: not local_ipam.stat.exists
+              when: ipam_repo != ""
 
             - name: Deploy IPAM from cloned repository
               ansible.builtin.command:
                 cmd: ansible-playbook playbook.yml
                 chdir: "{{ ipam_dir }}"
               register: ipam_remote_result
-              when: not local_ipam.stat.exists
+              when: ipam_repo != ""
 
             - name: Display remote IPAM deployment result
               debug:
                 msg: "{{ ipam_remote_result.stdout_lines }}"
-              when: not local_ipam.stat.exists
+              when: ipam_repo != ""
           when: not local_ipam.stat.exists
 
         - name: Wait for IPAM pods to be ready
