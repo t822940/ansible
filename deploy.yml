@@ -53,16 +53,6 @@
         chdir: "{{ work_dir }}/k3s_deployment"
       when: "'k3s' in deploy_components and k3s_running.rc != 0"
 
-    - name: Fix PostgreSQL data directory permissions
-      file:
-        path: /opt/awx-postgres-data
-        state: directory
-        mode: '0777'
-        owner: 70
-        group: 70
-      become: yes
-      when: "'awx' in deploy_components"
-
     - name: Deploy AWX
       ansible.builtin.command:
         cmd: ansible-playbook -i localhost, -c local main.yml
