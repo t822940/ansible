@@ -65,7 +65,7 @@
 
     - name: Deploy AWX
       ansible.builtin.command:
-        cmd: ansible-playbook main.yml
+        cmd: ansible-playbook -i localhost, main.yml
         chdir: "{{ work_dir }}/awx_deployment"
       when: "'awx' in deploy_components"
 
